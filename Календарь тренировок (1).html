@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Календарь тренировок</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --text:#1d1d1f; --muted:#8e8e93; --accent:#2563eb;
+          --done:#16a34a; --missed:#dc2626; --border:#e5e5ea; --train:#e0ecff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#000; --card:#111; --text:#f5f5f7; --muted:#8e8e93; --accent:#4a8bff;
+            --done:#22c55e; --missed:#f87171; --border:#222; --train:#162744; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:var(--bg); color:var(--text); padding:16px; }
+  .wrap { max-width:520px; margin:0 auto; }
+  .head { display:flex; align-items:center; justify-content:space-between; margin:4px 0 12px; }
+  .head h1 { font-size:22px; margin:0; }
+  .nav button { background:var(--card); color:var(--text); border:1px solid var(--border);
+                width:36px; height:36px; border-radius:50%; padding:0; font-size:18px; flex:none; }
+  .wd, .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; text-align:center; }
+  .wd div { font-size:12px; color:var(--muted); padding:4px 0; }
+  .cell { min-height:58px; border-radius:10px; padding:4px 2px; font-size:14px;
+          display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;
+          border:1px solid transparent; }
+  .cell.other { opacity:.3; }
+  .cell.train { background:var(--train); }
+  .cell.today b { background:var(--accent); color:#fff; border-radius:50%; width:26px; height:26px;
+                  display:flex; align-items:center; justify-content:center; }
+  .cell.done { background:var(--done); color:#fff; }
+  .cell.missed { background:var(--missed); color:#fff; }
+  .cell small { font-size:10px; color:var(--muted); }
+  .cell.done small, .cell.missed small { color:#fff; }
+  .cell.future-empty { cursor:default; }
+  .panel { background:var(--card); border:1px solid var(--border); border-radius:14px;
+           padding:14px; margin-top:16px; }
+  .panel h2 { font-size:16px; margin:0 0 4px; color:var(--accent); }
+  .panel .t { font-size:17px; font-weight:600; margin-bottom:4px; }
+  .panel .note { font-size:13px; color:var(--muted); margin-bottom:6px; }
+  .panel ul { font-size:14px; line-height:1.6; padding-left:18px; margin:8px 0 12px; }
+  .btns { display:flex; gap:8px; }
+  button.act { flex:1; border:none; border-radius:10px; padding:11px; font-size:15px;
+               font-weight:600; color:#fff; cursor:pointer; }
+  .b-done { background:var(--done); } .b-miss { background:var(--missed); }
+  .b-undo { background:var(--muted); }
+  button.act:disabled { opacity:.4; }
+  .rest { font-size:14px; color:var(--muted); }
+  .legend { font-size:12px; color:var(--muted); margin-top:10px; line-height:1.6; }
+  details { margin-top:16px; background:var(--card); border:1px solid var(--border);
+            border-radius:14px; padding:12px 14px; }
+  summary { font-weight:600; cursor:pointer; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:8px;
+         margin:10px 0; font-size:14px; }
+  select, input[type=date] { padding:6px; border-radius:8px; border:1px solid var(--border);
+                             background:var(--bg); color:var(--text); font-size:14px; }
+  .reset { background:none; color:var(--muted); border:1px solid var(--border); font-size:13px;
+           padding:8px; margin-top:12px; width:100%; border-radius:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="nav"><button id="prev">‹</button></div>
+    <h1 id="monthTitle"></h1>
+    <div class="nav"><button id="next">›</button></div>
+  </div>
+
+  <div class="wd" id="wd"></div>
+  <div class="grid" id="grid"></div>
+
+  <div class="legend">
+    Синий фон — день тренировки · Зелёный — сделано · Красный — пропущено · Кружок — сегодня
+  </div>
+
+  <div class="panel" id="panel"></div>
+
+  <details>
+    <summary>Настройки</summary>
+    <div class="row">
+      Дата старта
+      <input type="date" id="startDate">
+    </div>
+    <div id="daysSetup"></div>
+    <button class="reset" id="resetBtn">Сбросить прогресс</button>
+  </details>
+</div>
+
+<script>
+const TOTAL = 30;               // количество тренировок в плане
+const KEY = 'workoutCalendar.v1';
+const WD_NAMES = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+const WD_ORDER = [1,2,3,4,5,6,0]; // показываем с понедельника
+
+const WORKOUTS = [
+  { name: "День 1 · База на массу и объём", note: "Упор на силовое утомление трицепса и базовые сгибания.",
+    items: ["Отжимания с узкой постановкой рук — 4 × 12–15","Классический подъём гантелей на бицепс стоя — 4 × 15–20","Французский жим с гантелями лёжа — 3 × 12–15","Концентрированные сгибания на бицепс (сидя) — 3 × 15 на руку","Разгибание одной руки с гантелью из-за головы — 3 × 15","Подъём гантелей обратным хватом — 3 × 12–15"] },
+  { name: "День 2 · Рельеф и изоляция", note: "Упор на растяжение мышц под углом и жжение.",
+    items: ["Обратные отжимания от стула/дивана — 4 × 12–15","Концентрированные сгибания на бицепс (сидя) — 3 × 15 на руку","Разгибание одной руки с гантелью из-за головы — 3 × 15","Классический подъём гантелей на бицепс стоя — 4 × 15–20","Французский жим с гантелями лёжа — 3 × 12–15","Сгибания «Молот» с гантелями — 3 × 15–20"] },
+  { name: "День 3 · Шоковый пампинг (суперсеты)", note: "Упражнения парами без отдыха между ними.",
+    items: ["Суперсет 1 (3 круга): отжимания от пола до отказа + подъём на бицепс с супинацией 15 повт.; отдых 90 сек","Суперсет 2 (3 круга): жим-разгибание лёжа на полу 15 повт. + сгибания «Молот» 15 повт.; отдых 90 сек","Финишный добив (1 подход): обычные отжимания от пола на максимум"] }
+];
+
+// ---------- состояние ----------
+const todayD = new Date(); todayD.setHours(0,0,0,0);
+let state = {
+  start: fmt(todayD),
+  trainDays: [1, 3, 5],          // Пн, Ср, Пт (JS: 0=Вс ... 6=Сб)
+  dayMap: { 1: 0, 3: 1, 5: 2 },  // день недели -> номер тренировки (индекс)
+  marks: {}                      // 'YYYY-MM-DD' -> 'done' | 'missed'
+};
+try {
+  const s = JSON.parse(localStorage.getItem(KEY));
+  if (s && s.start) state = s;
+} catch(e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e) {} }
+
+let viewYear = todayD.getFullYear(), viewMonth = todayD.getMonth();
+
+// ---------- даты ----------
+function pad(n) { return String(n).padStart(2,'0'); }
+function fmt(d) { return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function parse(s) { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); }
+
+// ---------- расписание ----------
+// Список тренировочных сессий: идём по календарю от даты старта.
+// Сессия в день недели из trainDays получает тренировку dayMap[weekday].
+// Пропущенная тренировка переносится на следующую тренировочную сессию,
+// а её место занимает следующая по порядку (очередь).
+function buildSessions() {
+  const today = fmt(todayD);
+  const sessions = [];   // {date, w, status}
+  const due = [];        // тренировки, которые ждут своего дня
+  let cursor = parse(state.start);
+  let guard = 0;
+  while (sessions.length < TOTAL && guard++ < 1000) {
+    const date = fmt(cursor);
+    const wd = cursor.getDay();
+    if (state.trainDays.includes(wd)) due.push(state.dayMap[wd] ?? 0);
+    if (due.length) {
+      const w = due.shift();
+      let status = state.marks[date] || null;
+      if (!status && date < today) status = 'missed';
+      if (status === 'missed') due.unshift(w); // перенос на следующий календарный день
+      sessions.push({ date, w, status });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return sessions;
+}
+
+function toggleMark(date, current) {
+  const order = { none: 'done', done: 'missed', missed: 'none' };
+  const next = order[current || 'none'];
+  if (next === 'none') delete state.marks[date]; else state.marks[date] = next;
+  save(); render();
+}
+
+// ---------- отрисовка ----------
+function render() {
+  const today = fmt(todayD);
+  const sessions = buildSessions();
+  const bySession = {};
+  sessions.forEach((s, i) => bySession[s.date] = { ...s, n: i });
+
+  // заголовки дней недели
+  document.getElementById('wd').innerHTML = WD_ORDER.map(d => `<div>${WD_NAMES[d]}</div>`).join('');
+
+  // заголовок месяца
+  const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  document.getElementById('monthTitle').textContent = months[viewMonth] + ' ' + viewYear;
+
+  // сетка
+  const first = new Date(viewYear, viewMonth, 1);
+  const startOffset = (first.getDay() + 6) % 7; // понедельник первым
+  const gridStart = new Date(viewYear, viewMonth, 1 - startOffset);
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
+    const ds = fmt(d);
+    const sess = bySession[ds];
+    const cell = document.createElement('div');
+    let cls = 'cell';
+    if (d.getMonth() !== viewMonth) cls += ' other';
+    if (sess) cls += ' train';
+    if (sess && sess.status === 'done') cls += ' done';
+    if (sess && sess.status === 'missed') cls += ' missed';
+    cell.className = cls;
+    const dayNum = d.getDate();
+    cell.innerHTML = `<b class="${ds === today ? 'today' : ''}" style="${ds===today?'':''}">${dayNum}</b>` +
+      (sess ? `<small>Т${sess.w + 1}</small>` : '');
+    if (sess) cell.onclick = () => openDay(ds);
+    grid.appendChild(cell);
+  }
+
+  renderPanel(sessions, today);
+  renderSetup();
+}
+
+let selectedDate = null;
+function openDay(ds) { selectedDate = ds; render(); }
+
+function renderPanel(sessions, today) {
+  const panel = document.getElementById('panel');
+  // Если день не выбран — показываем ближайшую сессию сегодня/следующую
+  let target = selectedDate ? sessions.find(s => s.date === selectedDate) : null;
+  if (!target) {
+    target = sessions.find(s => s.date >= today && !s.status) || sessions.find(s => s.date >= today) || null;
+  }
+  const done = sessions.filter(s => s.status === 'done').length;
+  const missed = sessions.filter(s => s.status === 'missed').length;
+
+  if (!target) {
+    panel.innerHTML = `<div class="rest">Тренировок в этом плане нет.</div>`;
+    return;
+  }
+  const w = WORKOUTS[target.w];
+  const isToday = target.date === today;
+  const d = parse(target.date);
+  const dateLabel = d.toLocaleDateString('ru-RU', { weekday:'long', day:'numeric', month:'long' });
+  const idx = sessions.indexOf(target) + 1;
+
+  const markBtns = `<div class="btns">
+         <button class="act b-done" style="${target.status === 'done' ? '' : 'opacity:.45'}" onclick="setMark('${target.date}','done')">${target.status === 'done' ? '✓ Сделано' : 'Сделал'}</button>
+         <button class="act b-miss" style="${target.status === 'missed' ? '' : 'opacity:.45'}" onclick="setMark('${target.date}','missed')">${target.status === 'missed' ? '✓ Пропущено' : 'Пропустил'}</button>
+       </div>`;
+
+  panel.innerHTML = `
+    <h2>${isToday ? 'Сегодня' : dateLabel} · тренировка ${idx} из ${TOTAL}</h2>
+    <div class="t">${w.name}</div>
+    <div class="note">${w.note}</div>
+    <ul>${w.items.map(i => `<li>${i}</li>`).join('')}</ul>
+    ${markBtns}
+    <div class="legend">Выполнено: ${done} · Пропущено: ${missed}${target.status === 'missed' ? ' · Тренировка перенесена на следующую сессию' : ''}</div>`;
+}
+
+// Пропуск: сразу помечаем день как пропущенный
+function setMark(date, status) {
+  if (state.marks[date] === status) delete state.marks[date];
+  else state.marks[date] = status;
+  save(); render();
+}
+
+// ---------- настройки ----------
+function renderSetup() {
+  document.getElementById('startDate').value = state.start;
+  const wrap = document.getElementById('daysSetup');
+  const order = [1,2,3,4,5,6,0];
+  let html = '<div style="font-size:13px;color:var(--muted);margin:10px 0 4px">Дни тренировок и номер тренировки:</div>';
+  order.forEach(d => {
+    const on = state.trainDays.includes(d);
+    html += `<div class="row">
+      <label><input type="checkbox" ${on ? 'checked' : ''} onchange="toggleTrainDay(${d}, this.checked)"> ${WD_NAMES[d]}</label>
+      <select ${on ? '' : 'disabled'} onchange="setDayMap(${d}, this.value)">
+        <option value="0" ${state.dayMap[d]===0?'selected':''}>День 1</option>
+        <option value="1" ${state.dayMap[d]===1?'selected':''}>День 2</option>
+        <option value="2" ${state.dayMap[d]===2?'selected':''}>День 3</option>
+      </select></div>`;
+  });
+  wrap.innerHTML = html;
+}
+
+function toggleTrainDay(d, on) {
+  if (on) { if (!state.trainDays.includes(d)) state.trainDays.push(d); if (state.dayMap[d] === undefined) state.dayMap[d] = 0; }
+  else state.trainDays = state.trainDays.filter(x => x !== d);
+  state.trainDays.sort((a,b)=>a-b);
+  save(); render();
+}
+function setDayMap(d, v) { state.dayMap[d] = Number(v); save(); render(); }
+
+// ---------- навигация ----------
+document.getElementById('prev').onclick = () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } render(); };
+document.getElementById('next').onclick = () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } render(); };
+document.getElementById('startDate').onchange = e => {
+  if (e.target.value) { state.start = e.target.value; state.marks = {}; save(); render(); }
+};
+document.getElementById('resetBtn').onclick = () => {
+  if (confirm('Сбросить все отметки?')) { state.marks = {}; save(); render(); }
+};
+
+render();
+</script>
+</body>
+</html>
